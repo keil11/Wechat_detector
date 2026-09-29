@@ -82,26 +82,38 @@ class Monitor:
         try:
             while not self.stop_event.is_set():
                 groups = store.enabled_groups()
+                if not groups:
+                    self._set_status("没有已选群聊；请至少选择一个群")
+                    if self.stop_event.wait(10):
+                        break
+                    continue
                 for group in groups:
                     if self.stop_event.is_set():
                         break
                     group_id = group["id"]
                     cursor = group["last_seq"]
+                    self._set_status(f"正在检查「{group['name']}」的新消息…")
+                    inserted_count = 0
                     if cursor is None:
                         # First run for this group: analyze the 50 newest local messages.
-                        store.save_messages(group_id, self.reader.read_initial(group_id))
+                        initial = self.reader.read_initial(group_id)
+                        inserted_count += store.save_messages(group_id, initial)
                     else:
                         while not self.stop_event.is_set():
                             new = self.reader.read_new(group_id, cursor)
                             if not new:
                                 break
                             inserted = store.save_messages(group_id, new)
+                            inserted_count += inserted
                             next_cursor = max(int(m["sort_seq"]) for m in new)
                             if next_cursor <= cursor and not inserted:
                                 break
                             cursor = max(cursor, next_cursor)
                             if len(new) < 500:
                                 break
+                    self._set_status(
+                        f"已检查「{group['name']}」；新增 {inserted_count} 条消息"
+                    )
                     # Every message goes to the model. No keyword or @ prefilter.
                     for _ in range(3):
                         if self.stop_event.is_set():
@@ -116,6 +128,8 @@ class Monitor:
                         tasks = analyze(group["name"], pending, context, names, load_api_key())
                         store.apply_analysis(group_id, pending, tasks)
                         self._set_status(f"已分析「{group['name']}」；模型提出 {len(tasks)} 条候选待办")
+                if not self.stop_event.is_set():
+                    self._set_status(f"监听中，已检查 {len(groups)} 个群")
                 if self.stop_event.wait(10):
                     break
         except Exception as exc:
