@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,54 @@ class StoreTests(unittest.TestCase):
                 store.update_tasks_status([task_ids[0], 999], "忽略")
             self.assertTrue(all(task["status"] == "已完成" for task in store.list_tasks()))
 
+    def test_analysis_merges_multiple_suggestions_from_one_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "tasks.db")
+            store.upsert_groups([{"id": "g@chatroom", "name": "测试群"}])
+            messages = [{"sort_seq": 1, "local_id": 1, "create_time": 1700000000,
+                         "type": "文本", "content": "完成作业并复习章节"}]
+            store.save_messages("g@chatroom", messages)
+            pending, _ = store.pending_batch("g@chatroom")
+            store.apply_analysis("g@chatroom", pending, [
+                {"title": "完成作业", "assignee": "me", "confidence": 0.9,
+                 "source_ids": ["1"], "evidence": "完成作业并复习章节",
+                 "due_at": "2026-10-08T18:00:00-06:00"},
+                {"title": "复习章节", "assignee": "me", "confidence": 0.8,
+                 "source_ids": ["1"], "evidence": "完成作业并复习章节",
+                 "due_at": "2026-10-07T18:00:00-06:00"},
+            ])
+
+            tasks = store.list_tasks()
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["title"], "完成作业；复习章节")
+            self.assertEqual(tasks[0]["due_at"], "2026-10-07T18:00:00-06:00")
+
+    def test_existing_duplicate_source_tasks_are_merged_on_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tasks.db"
+            store = Store(path)
+            store.upsert_groups([{"id": "g@chatroom", "name": "测试群"}])
+            with store._connect() as db:
+                db.execute("DROP INDEX ux_tasks_one_per_source")
+                for title, due in (("作业习题", "2026-10-08T18:00:00-06:00"),
+                                   ("复习章节", None),
+                                   ("阅读课文", "2026-10-07T18:00:00-06:00")):
+                    db.execute(
+                        "INSERT INTO tasks(group_id,title,due_at,assignee,confidence,status,source_seq,source_local_id) "
+                        "VALUES ('g@chatroom',?,?,'me',0.9,'待确认',10,2)", (title, due)
+                    )
+
+            migrated = Store(path).list_tasks()
+            self.assertEqual(len(migrated), 1)
+            self.assertEqual(migrated[0]["title"], "作业习题；复习章节；阅读课文")
+            self.assertEqual(migrated[0]["due_at"], "2026-10-07T18:00:00-06:00")
+            db = sqlite3.connect(path)
+            try:
+                indexes = {row[1] for row in db.execute("PRAGMA index_list(tasks)")}
+            finally:
+                db.close()
+            self.assertIn("ux_tasks_one_per_source", indexes)
+
     def test_groups_are_sorted_by_latest_message_time(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "tasks.db")
@@ -84,6 +133,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(analyze("群", messages, [], ["我"], "test-key"), [])
         sent = post.call_args.kwargs["json"]
         self.assertEqual(sent["model"], "deepseek-flash")
+        self.assertIn("每条原始消息最多生成一项待办", sent["messages"][0]["content"])
         self.assertIn("闲聊", sent["messages"][1]["content"])
         self.assertIn("请发报告", sent["messages"][1]["content"])
 

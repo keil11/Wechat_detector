@@ -56,6 +56,41 @@ class Store:
             columns = {row[1] for row in db.execute("PRAGMA table_info(groups)")}
             if "latest_at" not in columns:
                 db.execute("ALTER TABLE groups ADD COLUMN latest_at INTEGER NOT NULL DEFAULT 0")
+            self._merge_duplicate_source_tasks(db)
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_one_per_source "
+                "ON tasks(group_id, source_seq, source_local_id)"
+            )
+
+    @staticmethod
+    def _merge_duplicate_source_tasks(db):
+        duplicate_sources = db.execute(
+            "SELECT group_id,source_seq,source_local_id FROM tasks "
+            "GROUP BY group_id,source_seq,source_local_id HAVING COUNT(*) > 1"
+        ).fetchall()
+        for source in duplicate_sources:
+            rows = db.execute(
+                "SELECT * FROM tasks WHERE group_id=? AND source_seq=? AND source_local_id=? "
+                "ORDER BY id",
+                (source["group_id"], source["source_seq"], source["source_local_id"]),
+            ).fetchall()
+            titles = list(dict.fromkeys(row["title"].strip() for row in rows if row["title"].strip()))
+            statuses = {row["status"] for row in rows}
+            status = next(iter(statuses)) if len(statuses) == 1 else "待确认"
+            due_dates = [row["due_at"] for row in rows if row["due_at"]]
+            due_at = min(due_dates) if due_dates else None
+            assignee = "me" if all(row["assignee"] == "me" for row in rows) else "uncertain"
+            confidence = min(float(row["confidence"]) for row in rows)
+            evidence = max((row["evidence"] or "" for row in rows), key=len)
+            keep_id = rows[0]["id"]
+
+            db.executemany("DELETE FROM tasks WHERE id=?", [(row["id"],) for row in rows[1:]])
+            db.execute(
+                "UPDATE tasks SET title=?,due_at=?,assignee=?,confidence=?,status=?,evidence=? "
+                "WHERE id=?",
+                ("；".join(titles) or rows[0]["title"], due_at, assignee,
+                 confidence, status, evidence, keep_id),
+            )
 
     @contextmanager
     def _connect(self):
@@ -147,22 +182,46 @@ class Store:
 
     def apply_analysis(self, group_id, messages, tasks):
         ids = {(str(i + 1)): m for i, m in enumerate(messages)}
+        grouped = {}
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            title = str(task.get("title") or "").strip()
+            source_ids = task.get("source_ids") or []
+            if not isinstance(source_ids, list):
+                continue
+            source = next((ids[str(i)] for i in source_ids if str(i) in ids), None)
+            assignee = str(task.get("assignee") or "uncertain")
+            if not title or source is None or assignee not in ("me", "uncertain"):
+                continue
+            try:
+                confidence = max(0.0, min(1.0, float(task.get("confidence") or 0)))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            key = (int(source["seq"]), int(source["local_id"]))
+            item = grouped.setdefault(key, {
+                "source": source, "titles": [], "due_dates": [], "assignees": [],
+                "confidences": [], "evidence": [],
+            })
+            if title not in item["titles"]:
+                item["titles"].append(title)
+            due = str(task.get("due_at") or "").strip()
+            if due and due not in item["due_dates"]:
+                item["due_dates"].append(due)
+            item["assignees"].append(assignee)
+            item["confidences"].append(confidence)
+            evidence = str(task.get("evidence") or "").strip()
+            if evidence and evidence not in item["evidence"]:
+                item["evidence"].append(evidence)
+
         with self._connect() as db:
-            for task in tasks:
-                if not isinstance(task, dict):
-                    continue
-                title = str(task.get("title") or "").strip()[:240]
-                source_ids = task.get("source_ids") or []
-                source = next((ids[str(i)] for i in source_ids if str(i) in ids), None)
-                assignee = str(task.get("assignee") or "uncertain")
-                if not title or source is None or assignee not in ("me", "uncertain"):
-                    continue
-                try:
-                    confidence = max(0.0, min(1.0, float(task.get("confidence") or 0)))
-                except (TypeError, ValueError):
-                    confidence = 0.0
-                due = str(task.get("due_at") or "").strip() or None
-                evidence = str(task.get("evidence") or "").strip()[:500]
+            for item in grouped.values():
+                title = "；".join(item["titles"])
+                due = min(item["due_dates"]) if item["due_dates"] else None
+                assignee = "uncertain" if "uncertain" in item["assignees"] else "me"
+                confidence = min(item["confidences"])
+                evidence = max(item["evidence"], key=len, default="")[:500]
+                source = item["source"]
                 db.execute(
                     "INSERT OR IGNORE INTO tasks "
                     "(group_id,title,due_at,assignee,confidence,source_seq,source_local_id,evidence) "
