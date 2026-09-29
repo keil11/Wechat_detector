@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 
@@ -57,10 +58,41 @@ class Store:
             if "latest_at" not in columns:
                 db.execute("ALTER TABLE groups ADD COLUMN latest_at INTEGER NOT NULL DEFAULT 0")
             self._merge_duplicate_source_tasks(db)
+            self._backfill_task_evidence(db)
             db.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_one_per_source "
                 "ON tasks(group_id, source_seq, source_local_id)"
             )
+
+    @staticmethod
+    def _format_source_message(sender, sent_at, message_type, content):
+        sender = str(sender or "未识别").strip() or "未识别"
+        header = [f"发布人：{sender}"]
+        try:
+            timestamp = int(sent_at or 0)
+            if timestamp > 0:
+                sent_time = datetime.fromtimestamp(timestamp).astimezone()
+                header.append(f"时间：{sent_time.strftime('%Y-%m-%d %H:%M')}")
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
+        message_type = str(message_type or "").strip()
+        if message_type and message_type != "文本":
+            header.append(f"类型：{message_type}")
+        body = str(content or "")
+        return "\n".join(header) + "\n\n" + body
+
+    @classmethod
+    def _backfill_task_evidence(cls, db):
+        rows = db.execute(
+            "SELECT t.id,m.sender,m.sent_at,m.type,m.content FROM tasks t "
+            "JOIN messages m ON m.group_id=t.group_id AND m.seq=t.source_seq "
+            "AND m.local_id=t.source_local_id"
+        ).fetchall()
+        db.executemany(
+            "UPDATE tasks SET evidence=? WHERE id=?",
+            [(cls._format_source_message(row["sender"], row["sent_at"], row["type"], row["content"]),
+              row["id"]) for row in rows],
+        )
 
     @staticmethod
     def _merge_duplicate_source_tasks(db):
@@ -201,7 +233,7 @@ class Store:
             key = (int(source["seq"]), int(source["local_id"]))
             item = grouped.setdefault(key, {
                 "source": source, "titles": [], "due_dates": [], "assignees": [],
-                "confidences": [], "evidence": [],
+                "confidences": [],
             })
             if title not in item["titles"]:
                 item["titles"].append(title)
@@ -210,9 +242,6 @@ class Store:
                 item["due_dates"].append(due)
             item["assignees"].append(assignee)
             item["confidences"].append(confidence)
-            evidence = str(task.get("evidence") or "").strip()
-            if evidence and evidence not in item["evidence"]:
-                item["evidence"].append(evidence)
 
         with self._connect() as db:
             for item in grouped.values():
@@ -220,8 +249,11 @@ class Store:
                 due = min(item["due_dates"]) if item["due_dates"] else None
                 assignee = "uncertain" if "uncertain" in item["assignees"] else "me"
                 confidence = min(item["confidences"])
-                evidence = max(item["evidence"], key=len, default="")[:500]
                 source = item["source"]
+                evidence = self._format_source_message(
+                    source.get("sender"), source.get("sent_at"),
+                    source.get("type"), source.get("content"),
+                )
                 db.execute(
                     "INSERT OR IGNORE INTO tasks "
                     "(group_id,title,due_at,assignee,confidence,source_seq,source_local_id,evidence) "

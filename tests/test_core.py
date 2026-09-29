@@ -63,16 +63,17 @@ class StoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "tasks.db")
             store.upsert_groups([{"id": "g@chatroom", "name": "测试群"}])
-            messages = [{"sort_seq": 1, "local_id": 1, "create_time": 1700000000,
-                         "type": "文本", "content": "完成作业并复习章节"}]
+            messages = [{"sort_seq": 1, "local_id": 1, "sender_username": "张老师",
+                         "create_time": 1700000000, "type": "文本",
+                         "content": "完成作业并复习章节"}]
             store.save_messages("g@chatroom", messages)
             pending, _ = store.pending_batch("g@chatroom")
             store.apply_analysis("g@chatroom", pending, [
                 {"title": "完成作业", "assignee": "me", "confidence": 0.9,
-                 "source_ids": ["1"], "evidence": "完成作业并复习章节",
+                 "source_ids": ["1"], "evidence": "完成作业",
                  "due_at": "2026-10-08T18:00:00-06:00"},
                 {"title": "复习章节", "assignee": "me", "confidence": 0.8,
-                 "source_ids": ["1"], "evidence": "完成作业并复习章节",
+                 "source_ids": ["1"], "evidence": "复习章节",
                  "due_at": "2026-10-07T18:00:00-06:00"},
             ])
 
@@ -80,6 +81,27 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["title"], "完成作业；复习章节")
             self.assertEqual(tasks[0]["due_at"], "2026-10-07T18:00:00-06:00")
+            self.assertTrue(tasks[0]["evidence"].startswith("发布人：张老师\n时间："))
+            self.assertTrue(tasks[0]["evidence"].endswith("\n\n完成作业并复习章节"))
+
+    def test_startup_backfills_complete_source_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tasks.db"
+            store = Store(path)
+            store.upsert_groups([{"id": "g@chatroom", "name": "测试群"}])
+            store.save_messages("g@chatroom", [{
+                "sort_seq": 1, "local_id": 1, "sender_username": "李老师",
+                "create_time": 1700000000, "type": "文本", "content": "完整的原始消息正文。",
+            }])
+            with store._connect() as db:
+                db.execute(
+                    "INSERT INTO tasks(group_id,title,assignee,confidence,source_seq,source_local_id,evidence) "
+                    "VALUES ('g@chatroom','待办','me',0.9,1,1,'模型截取的片段')"
+                )
+
+            task = Store(path).list_tasks()[0]
+            self.assertTrue(task["evidence"].startswith("发布人：李老师\n时间："))
+            self.assertTrue(task["evidence"].endswith("\n\n完整的原始消息正文。"))
 
     def test_existing_duplicate_source_tasks_are_merged_on_startup(self):
         with tempfile.TemporaryDirectory() as directory:
