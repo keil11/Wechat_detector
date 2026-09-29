@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 
@@ -180,11 +181,39 @@ class Store:
             return [dict(r) for r in db.execute(
                 "SELECT t.*,g.name AS group_name FROM tasks t JOIN groups g ON g.id=t.group_id "
                 "ORDER BY CASE t.status WHEN '待确认' THEN 0 WHEN '进行中' THEN 1 "
-                "WHEN '已完成' THEN 2 ELSE 3 END, COALESCE(t.due_at,'9999'),t.id DESC"
+                "WHEN '已完成' THEN 2 WHEN '已过期' THEN 3 ELSE 4 END, "
+                "COALESCE(t.due_at,'9999'),t.id DESC"
             )]
 
+    def expire_overdue_tasks(self, now=None):
+        """Move active tasks past their due time into the recoverable expired state."""
+        current = now or datetime.now().astimezone()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+        with self._connect() as db:
+            candidates = db.execute(
+                "SELECT id,due_at FROM tasks "
+                "WHERE status IN ('待确认','进行中') AND due_at IS NOT NULL"
+            ).fetchall()
+            expired = []
+            for row in candidates:
+                try:
+                    due = datetime.fromisoformat(row["due_at"].strip())
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=current.tzinfo)
+                if due <= current:
+                    expired.append((row["id"],))
+            db.executemany(
+                "UPDATE tasks SET status='已过期' WHERE id=?",
+                expired,
+            )
+            return len(expired)
+
     def update_task(self, task_id, *, title=None, due_at=None, status=None):
-        allowed = {"待确认", "进行中", "已完成", "忽略"}
+        allowed = {"待确认", "进行中", "已完成", "已过期", "忽略"}
         if status is not None and status not in allowed:
             raise ValueError("无效状态")
         with self._connect() as db:

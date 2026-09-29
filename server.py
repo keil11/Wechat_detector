@@ -146,6 +146,7 @@ def index():
 @app.get("/api/state")
 def state():
     status, running, ready = monitor.snapshot()
+    store.expire_overdue_tasks()
     return jsonify({
         "groups": store.list_groups(),
         "tasks": store.list_tasks(),

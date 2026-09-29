@@ -2,13 +2,32 @@
 
 这是一个本机运行的网页客户端。它读取已登录的 Windows 微信客户端本地消息，让你选择要监听的群，并用 DeepSeek 从群聊上下文中提出待办建议。浏览器访问 `http://127.0.0.1:8765`。左侧群聊是固定的一列，列表区域独立滚动，并按微信会话最新消息时间倒序排列。
 
+## 环境准备
+
+推荐使用 [uv](https://docs.astral.sh/uv/) 创建项目专用的轻量虚拟环境。在 PowerShell 中进入本目录后运行：
+
+```powershell
+uv venv .venv --python 3.12
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+`.venv` 是每台电脑自行生成的本地环境，已在 `.gitignore` 中排除，不应提交到 GitHub。仓库中的 `requirements.txt` 是重建环境所需的依赖声明。
+
+如需在当前 PowerShell 会话中激活环境：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+使用 uv 运行命令时不强制要求先激活环境。
+
 ## 启动
 
 1. 保持 Windows 微信登录。当前已在微信 4.1.13.65 上验证读取；微信更新后可能需要适配。
-2. 在命令行进入本目录，运行 `python -m pip install -r requirements.txt` 安装依赖。
-3. 双击 `启动客户端.bat`，或运行 `python server.py`。启动后浏览器会自动打开；也可以手动访问 `http://127.0.0.1:8765`。
+2. 按上述步骤创建 `.venv` 并安装依赖。
+3. 双击 `启动客户端.bat`，或运行 `.\.venv\Scripts\python.exe server.py`。启动后浏览器会自动打开；也可以手动访问 `http://127.0.0.1:8765`。
 4. 在网页中设置 DeepSeek 密钥。密钥保存在 Windows 凭据管理器，不写入项目文件。
-5. 搜索并选中群聊，点击“启用所选”，再点击“开始监听”。
+5. 搜索并选中群聊，点击“开始监听”。
 
 首次启用某个群时，程序读取该群本机保存的最近 50 条消息。此后每 10 秒检查新增消息。所有读到的消息都会交给 `deepseek-flash` 判断，不做关键词预筛选；每次请求最多处理 20 条，并附带前 5 条已分析消息作为上下文。模型提出的事项先进入“待确认”，由你确认、修改或忽略。
 
@@ -25,8 +44,9 @@
 - 文字消息可供模型直接分析；图片、语音等消息暂时只有类型或可读文本提示，不做图片识别和语音转写。
 - 本机微信没有保存的消息无法读取。微信更新可能使读取库失效。
 - 事项的后续修改和取消需要你在客户端处理；当前版本不会自动把群里的变更合并到旧待办。
+- 已经超过截止时间的“待确认”或“进行中”事项会自动移入“已过期”，原始记录会保留。
 - 提醒在浏览器页面打开时生效；开启浏览器通知后，确认的待办到期时会出现系统通知。
 
 消息读取代码来自 `fanyuantaier/wechatauto-replica`，固定提交见 `vendor/UPSTREAM_COMMIT.txt`；本地副本只载入读取模块，并修复了 `get_self_info()` 未关闭数据库连接的问题。原项目许可证见 `vendor/LICENSE`。
 
-运行检查：`python -m unittest discover -s tests -v`。
+运行检查：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`。

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -43,6 +44,36 @@ class StoreTests(unittest.TestCase):
             ])
             self.assertEqual([g["id"] for g in store.list_groups()],
                              ["new@chatroom", "old@chatroom"])
+
+    def test_overdue_active_tasks_are_moved_to_expired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "tasks.db")
+            store.upsert_groups([{"id": "g@chatroom", "name": "测试群"}])
+            messages = [
+                {"sort_seq": 1, "local_id": 1, "sender_id": 3,
+                 "create_time": 1700000000, "type": "文本", "content": "过期事项"},
+                {"sort_seq": 2, "local_id": 2, "sender_id": 3,
+                 "create_time": 1700000001, "type": "文本", "content": "未来事项"},
+            ]
+            store.save_messages("g@chatroom", messages)
+            pending, _ = store.pending_batch("g@chatroom")
+            store.apply_analysis("g@chatroom", pending, [
+                {"title": "已超时", "due_at": "2026-09-29T09:00:00+00:00",
+                 "assignee": "me", "confidence": 0.9, "source_ids": ["1"],
+                 "evidence": "过期事项"},
+                {"title": "还没超时", "due_at": "2026-09-29T11:00:00+00:00",
+                 "assignee": "me", "confidence": 0.9, "source_ids": ["2"],
+                 "evidence": "未来事项"},
+            ])
+
+            changed = store.expire_overdue_tasks(
+                datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
+            )
+            tasks = {task["title"]: task for task in store.list_tasks()}
+
+            self.assertEqual(changed, 1)
+            self.assertEqual(tasks["已超时"]["status"], "已过期")
+            self.assertEqual(tasks["还没超时"]["status"], "待确认")
 
 
 class ModelTests(unittest.TestCase):

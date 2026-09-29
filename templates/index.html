@@ -116,7 +116,7 @@
     let tab = '待确认';
     let selectedTask = null;
     let seenDue = new Set();
-    const tabs = ['待确认', '进行中', '已完成', '忽略'];
+    const tabs = ['待确认', '进行中', '已完成', '已过期', '忽略'];
     function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3500); }
     async function post(path, data={}) {
