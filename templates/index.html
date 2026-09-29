@@ -48,8 +48,17 @@
     .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
     .tab { background: transparent; color: #71867a; padding: 7px 11px; font-size: 13px; }
     .tab.active { background: #e9f5ec; color: #177a58; font-weight: 700; }
-    .task { border: 1px solid #e7ece7; border-radius: 12px; padding: 15px 16px; margin-top: 9px; cursor: pointer; display: flex; gap: 13px; align-items: flex-start; }
+    .bulkbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 0 13px; border-bottom: 1px solid #edf1ed; color: #71867a; font-size: 12px; }
+    .bulk-select-all { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+    .bulk-select-all input, .task-select { accent-color: #177a58; }
+    .bulk-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .bulk-actions button { padding: 7px 10px; font-size: 12px; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    .task { border: 1px solid #e7ece7; border-radius: 12px; padding: 15px 16px; margin-top: 9px; cursor: pointer; display: flex; gap: 13px; align-items: center; }
     .task:hover { border-color: #9ccfb0; background: #fcfffc; }
+    .task.selected { border-color: #9ccfb0; background: #f3faf4; }
+    .task-select { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; cursor: pointer; }
+    .task-main { flex: 1; min-width: 0; }
     .task-title { font-weight: 700; margin-bottom: 8px; }
     .task-meta { color: #819086; font-size: 12px; line-height: 1.5; }
     .pill { background: #f0f6f1; color: #438264; border-radius: 30px; font-size: 11px; padding: 4px 9px; white-space: nowrap; margin-left: auto; }
@@ -96,6 +105,16 @@
       </div>
       <section class="panel">
         <div class="panel-head"><h2>事项列表</h2><div class="tabs" id="tabs"></div></div>
+        <div class="bulkbar">
+          <label class="bulk-select-all"><input type="checkbox" id="selectAllTasks"> 全选当前列表</label>
+          <span id="selectedCount">已选 0 项</span>
+          <div class="bulk-actions">
+            <button class="primary" data-bulk-status="进行中" title="将所选事项保存并确认">保存并确认</button>
+            <button class="secondary" data-bulk-status="已完成">完成</button>
+            <button class="danger" data-bulk-status="忽略">忽略</button>
+            <button class="secondary" id="clearSelection">取消选择</button>
+          </div>
+        </div>
         <div id="tasks"><div class="empty">选群并开始监听后，识别出的事项会出现在这里。</div></div>
       </section>
       <div class="settings">
@@ -115,6 +134,8 @@
     let current = {groups: [], tasks: [], running: false};
     let tab = '待确认';
     let selectedTask = null;
+    let selectedTaskIds = new Set();
+    let bulkUpdating = false;
     let seenDue = new Set();
     const tabs = ['待确认', '进行中', '已完成', '忽略'];
     function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -157,8 +178,40 @@
       $('tabs').innerHTML = tabs.map(t => `<button class="tab ${tab === t ? 'active' : ''}" data-tab="${t}">${t}</button>`).join('');
       const tasks = current.tasks.filter(t => t.status === tab);
       $('tasks').innerHTML = tasks.length ? tasks.map(t =>
-        `<div class="task" data-task="${t.id}"><div><div class="task-title">${escapeHtml(t.title)}</div><div class="task-meta">${escapeHtml(t.group_name)} · ${escapeHtml(t.due_at || '截止时间未确定')}</div></div><span class="pill">${Math.round(t.confidence * 100)}% 把握</span></div>`
+        `<div class="task ${selectedTaskIds.has(t.id) ? 'selected' : ''}" data-task="${t.id}"><input class="task-select" type="checkbox" data-select-task="${t.id}" aria-label="选择待办 ${escapeHtml(t.title)}" ${selectedTaskIds.has(t.id) ? 'checked' : ''}><div class="task-main"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-meta">${escapeHtml(t.group_name)} · ${escapeHtml(t.due_at || '截止时间未确定')}</div></div><span class="pill">${Math.round(t.confidence * 100)}% 把握</span></div>`
       ).join('') : `<div class="empty">${tab === '待确认' ? '还没有待确认的事项' : '这里暂无事项'}</div>`;
+      updateSelectionUi(tasks);
+    }
+    function updateSelectionUi(tasks = current.tasks.filter(t => t.status === tab)) {
+      const selected = tasks.filter(t => selectedTaskIds.has(t.id)).length;
+      const selectAll = $('selectAllTasks');
+      selectAll.checked = tasks.length > 0 && selected === tasks.length;
+      selectAll.indeterminate = selected > 0 && selected < tasks.length;
+      selectAll.disabled = tasks.length === 0 || bulkUpdating;
+      $('selectedCount').textContent = `已选 ${selected} 项`;
+      document.querySelectorAll('[data-bulk-status]').forEach(button => {
+        button.disabled = selected === 0 || bulkUpdating;
+      });
+      $('clearSelection').disabled = selected === 0 || bulkUpdating;
+    }
+    async function bulkUpdateTasks(status) {
+      const visible = current.tasks.filter(t => t.status === tab);
+      const ids = visible.filter(t => selectedTaskIds.has(t.id)).map(t => t.id);
+      if (!ids.length || bulkUpdating) return;
+      bulkUpdating = true;
+      updateSelectionUi(visible);
+      try {
+        await post('/api/tasks/bulk', {task_ids:ids, status});
+        selectedTaskIds.clear();
+        const action = status === '进行中' ? '保存并确认' : status === '已完成' ? '完成' : '忽略';
+        toast(`已${action} ${ids.length} 项`);
+        await refresh();
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        bulkUpdating = false;
+        updateSelectionUi();
+      }
     }
     function openTask(id) {
       selectedTask = current.tasks.find(t => t.id === Number(id));
@@ -173,6 +226,7 @@
       if (!selectedTask) return;
       try {
         await post(`/api/tasks/${selectedTask.id}`, {title:$('editTitle').value.trim(), due_at:$('editDue').value.trim(), status});
+        selectedTaskIds.delete(selectedTask.id);
         $('taskDialog').close(); toast('待办已更新'); await refresh();
       } catch (err) { toast(err.message); }
     }
@@ -193,8 +247,28 @@
       try { await post(`/api/groups/${encodeURIComponent(e.target.dataset.group)}`, {enabled:e.target.checked}); await refresh(); }
       catch (err) { toast(err.message); await refresh(); }
     });
-    $('tabs').addEventListener('click', e => { if (e.target.dataset.tab) { tab=e.target.dataset.tab; renderTasks(); } });
-    $('tasks').addEventListener('click', e => { const card=e.target.closest('[data-task]'); if (card) openTask(card.dataset.task); });
+    $('tabs').addEventListener('click', e => { if (e.target.dataset.tab) { tab=e.target.dataset.tab; selectedTaskIds.clear(); renderTasks(); } });
+    $('tasks').addEventListener('change', e => {
+      const id = Number(e.target.dataset.selectTask);
+      if (!id) return;
+      if (e.target.checked) selectedTaskIds.add(id); else selectedTaskIds.delete(id);
+      const card = e.target.closest('[data-task]');
+      card?.classList.toggle('selected', e.target.checked);
+      updateSelectionUi();
+    });
+    $('tasks').addEventListener('click', e => {
+      if (e.target.closest('[data-select-task]')) return;
+      const card=e.target.closest('[data-task]'); if (card) openTask(card.dataset.task);
+    });
+    $('selectAllTasks').addEventListener('change', e => {
+      const visible = current.tasks.filter(t => t.status === tab);
+      visible.forEach(t => e.target.checked ? selectedTaskIds.add(t.id) : selectedTaskIds.delete(t.id));
+      renderTasks();
+    });
+    document.querySelector('.bulk-actions').addEventListener('click', e => {
+      if (e.target.dataset.bulkStatus) bulkUpdateTasks(e.target.dataset.bulkStatus);
+    });
+    $('clearSelection').onclick = () => { selectedTaskIds.clear(); renderTasks(); };
     $('keyButton').onclick = () => $('keyDialog').showModal();
     $('cancelKey').onclick = () => $('keyDialog').close();
     $('saveKey').onclick = async () => { try { await post('/api/key', {key:$('apiKey').value}); $('apiKey').value=''; $('keyDialog').close(); toast('密钥已保存'); await refresh(); } catch(err) { toast(err.message); } };

@@ -194,3 +194,26 @@ class Store:
                 db.execute("UPDATE tasks SET due_at=? WHERE id=?", (due_at.strip() or None, task_id))
             if status is not None:
                 db.execute("UPDATE tasks SET status=? WHERE id=?", (status, task_id))
+
+    def update_tasks_status(self, task_ids, status):
+        allowed = {"待确认", "进行中", "已完成", "忽略"}
+        if status not in allowed:
+            raise ValueError("无效状态")
+        if any(isinstance(task_id, bool) or not isinstance(task_id, int) or task_id <= 0
+               for task_id in task_ids):
+            raise ValueError("事项编号无效")
+        ids = list(dict.fromkeys(task_ids))
+        if not ids:
+            raise ValueError("请先选择事项")
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as db:
+            found = db.execute(
+                f"SELECT COUNT(*) FROM tasks WHERE id IN ({placeholders})", ids
+            ).fetchone()[0]
+            if found != len(ids):
+                raise ValueError("部分事项已不存在，请刷新后重试")
+            db.execute(
+                f"UPDATE tasks SET status=? WHERE id IN ({placeholders})",
+                [status, *ids],
+            )
+            return len(ids)

@@ -219,6 +219,19 @@ def update_task(task_id):
     return jsonify({"ok": True})
 
 
+@app.post("/api/tasks/bulk")
+def update_tasks_bulk():
+    data = request.get_json(silent=True) or {}
+    task_ids = data.get("task_ids")
+    if not isinstance(task_ids, list) or not task_ids or len(task_ids) > 500:
+        return jsonify({"error": "请选择 1 到 500 个事项"}), 400
+    try:
+        updated = store.update_tasks_status(task_ids, data.get("status"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "updated": updated})
+
+
 if __name__ == "__main__":
     if os.environ.get("WECHAT_DETECTOR_NO_BROWSER") != "1":
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
