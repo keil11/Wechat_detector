@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>微信群待办助手</title>
+  <style>
+    :root { font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif; color: #18302a; background: #f4f7f4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; border: 0; border-radius: 10px; padding: 9px 14px; }
+    .primary { background: #177a58; color: white; font-weight: 700; }
+    .primary:hover { background: #116447; }
+    .secondary { background: #e8efe9; color: #205442; }
+    .danger { background: #f9e9e6; color: #a13d2c; }
+    .shell { height: 100vh; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); overflow: hidden; }
+    aside { background: #fff; border-right: 1px solid #e0e8e0; padding: 26px 18px; display: flex; flex-direction: column; height: 100vh; min-height: 0; overflow: hidden; }
+    .brand { display: flex; gap: 11px; align-items: center; margin: 0 0 25px; }
+    .logo { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: #177a58; color: white; font-size: 20px; }
+    .brand strong { font-size: 18px; letter-spacing: .2px; }
+    .brand small { display: block; margin-top: 2px; color: #779086; font-size: 11px; }
+    .section-label { font-size: 12px; font-weight: 700; color: #789087; margin: 0 0 9px; }
+    .search, .field { border: 1px solid #dce6de; border-radius: 10px; outline: 0; padding: 10px 12px; background: white; width: 100%; }
+    .search:focus, .field:focus { border-color: #52aa83; box-shadow: 0 0 0 3px #e7f4ec; }
+    #groups { margin-top: 10px; overflow-y: auto; overflow-x: hidden; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .group { display: flex; gap: 10px; align-items: center; padding: 10px 9px; border-radius: 9px; font-size: 13px; line-height: 1.35; cursor: pointer; }
+    .group:hover { background: #f1f7f2; }
+    .group input { accent-color: #177a58; flex: 0 0 auto; }
+    .group span { overflow-wrap: anywhere; }
+    .sidebar-bottom { border-top: 1px solid #e5ece5; padding-top: 17px; margin-top: 12px; color: #6b8277; font-size: 12px; line-height: 1.6; }
+    main { padding: 28px 36px 50px; max-width: 1450px; width: 100%; margin: 0 auto; min-height: 0; overflow-y: auto; }
+    .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+    h1 { font-size: 29px; margin: 0 0 7px; letter-spacing: -.4px; }
+    .subtitle { color: #73877b; font-size: 14px; margin: 0; }
+    .top-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .status-line { display: flex; gap: 10px; align-items: center; margin: 23px 0 20px; background: #eaf5ed; border: 1px solid #d7e9db; border-radius: 13px; padding: 12px 15px; font-size: 13px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #a7b5aa; flex: 0 0 auto; }
+    .dot.live { background: #24a36b; box-shadow: 0 0 0 4px #d3efdf; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px; }
+    .stat { background: white; border: 1px solid #e3ebe3; border-radius: 16px; padding: 18px 20px; }
+    .stat label { display: block; color: #7d9185; font-size: 12px; }
+    .stat strong { display: block; font-size: 26px; margin-top: 6px; }
+    .panel { background: white; border: 1px solid #e3ebe3; border-radius: 17px; padding: 20px; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 15px; }
+    h2 { font-size: 18px; margin: 0; }
+    .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+    .tab { background: transparent; color: #71867a; padding: 7px 11px; font-size: 13px; }
+    .tab.active { background: #e9f5ec; color: #177a58; font-weight: 700; }
+    .task { border: 1px solid #e7ece7; border-radius: 12px; padding: 15px 16px; margin-top: 9px; cursor: pointer; display: flex; gap: 13px; align-items: flex-start; }
+    .task:hover { border-color: #9ccfb0; background: #fcfffc; }
+    .task-title { font-weight: 700; margin-bottom: 8px; }
+    .task-meta { color: #819086; font-size: 12px; line-height: 1.5; }
+    .pill { background: #f0f6f1; color: #438264; border-radius: 30px; font-size: 11px; padding: 4px 9px; white-space: nowrap; margin-left: auto; }
+    .empty { text-align: center; padding: 50px 20px; color: #829388; font-size: 14px; }
+    .settings { margin-top: 18px; display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+    .settings .field-wrap { flex: 1; min-width: 220px; max-width: 420px; }
+    .settings label, dialog label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 7px; color: #567063; }
+    .hint { color: #819187; font-size: 12px; margin-top: 7px; line-height: 1.55; }
+    dialog { border: 0; border-radius: 18px; padding: 27px; width: min(540px, calc(100% - 28px)); box-shadow: 0 24px 80px #18302a35; }
+    dialog::backdrop { background: #10241d88; }
+    dialog h2 { margin: 0 0 18px; }
+    dialog .row { margin-bottom: 15px; }
+    dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+    .evidence { background: #f6f8f6; border-radius: 9px; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: #50665a; font-size: 13px; }
+    #toast { position: fixed; right: 20px; bottom: 20px; background: #1a4030; color: white; padding: 12px 16px; border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 350px; z-index: 10; }
+    #toast.show { opacity: 1; }
+    @media (max-width: 850px) { .shell { height: auto; min-height: 100vh; display: block; overflow: visible; } aside { height: 290px; min-height: 0; } main { padding: 22px 16px; } .top { display: block; } .top-actions { justify-content: flex-start; margin-top: 14px; } .cards { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 21px; } .panel-head { display: block; } .tabs { margin-top: 12px; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><div class="logo">✓</div><div><strong>群聊待办</strong><small>本机运行 · DeepSeek 分析</small></div></div>
+      <div class="section-label">监听的微信群 <span id="groupCount"></span></div>
+      <input id="groupSearch" class="search" placeholder="搜索群聊名称" autocomplete="off">
+      <div id="groups"><div class="empty">正在读取本机微信…</div></div>
+      <div class="sidebar-bottom">勾选后，首次分析该群最近 50 条本机消息。之后持续检查新消息。所有消息直接交给模型判断待办。</div>
+    </aside>
+    <main>
+      <div class="top">
+        <div><h1>我的待办</h1><p class="subtitle">从选定的微信群中发现需要你处理的事项</p></div>
+        <div class="top-actions">
+          <button class="secondary" id="keyButton">设置 API 密钥</button>
+          <button class="secondary" id="notifyButton">开启浏览器提醒</button>
+          <button class="primary" id="startButton">开始监听</button>
+          <button class="danger" id="stopButton" hidden>停止监听</button>
+        </div>
+      </div>
+      <div class="status-line"><span class="dot" id="statusDot"></span><span id="status">正在连接本机微信…</span></div>
+      <div class="cards">
+        <div class="stat"><label>待确认</label><strong id="pendingCount">0</strong></div>
+        <div class="stat"><label>进行中</label><strong id="activeCount">0</strong></div>
+        <div class="stat"><label>已完成</label><strong id="doneCount">0</strong></div>
+      </div>
+      <section class="panel">
+        <div class="panel-head"><h2>事项列表</h2><div class="tabs" id="tabs"></div></div>
+        <div id="tasks"><div class="empty">选群并开始监听后，识别出的事项会出现在这里。</div></div>
+      </section>
+      <div class="settings">
+        <div class="field-wrap"><label for="myNames">我在群里的称呼</label><input class="field" id="myNames" placeholder="例如：小王，王明"></div>
+        <button class="secondary" id="saveNames">保存称呼</button>
+      </div>
+      <p class="hint">称呼用于帮助模型判断任务是不是交给你。多个称呼用逗号分隔。消息正文保存在本机；选定群的消息会发送给 DeepSeek 分析。</p>
+    </main>
+  </div>
+
+  <dialog id="keyDialog"><h2>设置 DeepSeek API 密钥</h2><div class="row"><label for="apiKey">API 密钥</label><input class="field" type="password" id="apiKey" autocomplete="off"></div><p class="hint">密钥仅保存在这台电脑的 Windows 凭据管理器，不写入项目文件。</p><div class="actions"><button class="secondary" id="cancelKey">取消</button><button class="primary" id="saveKey">保存密钥</button></div></dialog>
+  <dialog id="taskDialog"><h2>待办详情</h2><div class="row"><label for="editTitle">事项</label><input class="field" id="editTitle"></div><div class="row"><label for="editDue">截止时间</label><input class="field" id="editDue" placeholder="2026-10-01 18:00"></div><div class="row"><label>原消息依据</label><div class="evidence" id="evidence"></div></div><p class="hint" id="taskSource"></p><div class="actions"><button class="secondary" id="closeTask">关闭</button><button class="danger" id="ignoreTask">忽略</button><button class="secondary" id="completeTask">完成</button><button class="primary" id="saveTask">保存并确认</button></div></dialog>
+  <div id="toast"></div>
+  <script>
+    const csrf = document.querySelector('meta[name="csrf-token"]').content;
+    const $ = id => document.getElementById(id);
+    let current = {groups: [], tasks: [], running: false};
+    let tab = '待确认';
+    let selectedTask = null;
+    let seenDue = new Set();
+    const tabs = ['待确认', '进行中', '已完成', '忽略'];
+    function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3500); }
+    async function post(path, data={}) {
+      const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrf}, body:JSON.stringify(data)});
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || `请求失败（${r.status}）`);
+      return out;
+    }
+    async function refresh() {
+      try {
+        const r = await fetch('/api/state', {cache:'no-store'});
+        if (!r.ok) throw new Error('无法连接本机服务');
+        current = await r.json();
+        render();
+      } catch (err) { $('status').textContent = err.message; $('statusDot').classList.remove('live'); }
+    }
+    function render() {
+      $('status').textContent = current.status;
+      $('statusDot').classList.toggle('live', current.running);
+      $('startButton').hidden = current.running;
+      $('stopButton').hidden = !current.running;
+      $('keyButton').textContent = current.key_configured ? '更新 API 密钥' : '设置 API 密钥';
+      if (document.activeElement !== $('myNames')) $('myNames').value = current.my_names || '';
+      $('groupCount').textContent = `· 已选 ${current.groups.filter(g => g.enabled).length}`;
+      renderGroups(); renderTasks(); checkReminders();
+    }
+    function renderGroups() {
+      const word = $('groupSearch').value.trim().toLowerCase();
+      const groups = current.groups.filter(g => g.name.toLowerCase().includes(word));
+      $('groups').innerHTML = groups.length ? groups.map(g =>
+        `<label class="group"><input type="checkbox" data-group="${escapeHtml(g.id)}" ${g.enabled ? 'checked' : ''}><span>${escapeHtml(g.name)}</span></label>`
+      ).join('') : '<div class="empty">没有匹配的群聊</div>';
+    }
+    function renderTasks() {
+      $('pendingCount').textContent = current.tasks.filter(t => t.status === '待确认').length;
+      $('activeCount').textContent = current.tasks.filter(t => t.status === '进行中').length;
+      $('doneCount').textContent = current.tasks.filter(t => t.status === '已完成').length;
+      $('tabs').innerHTML = tabs.map(t => `<button class="tab ${tab === t ? 'active' : ''}" data-tab="${t}">${t}</button>`).join('');
+      const tasks = current.tasks.filter(t => t.status === tab);
+      $('tasks').innerHTML = tasks.length ? tasks.map(t =>
+        `<div class="task" data-task="${t.id}"><div><div class="task-title">${escapeHtml(t.title)}</div><div class="task-meta">${escapeHtml(t.group_name)} · ${escapeHtml(t.due_at || '截止时间未确定')}</div></div><span class="pill">${Math.round(t.confidence * 100)}% 把握</span></div>`
+      ).join('') : `<div class="empty">${tab === '待确认' ? '还没有待确认的事项' : '这里暂无事项'}</div>`;
+    }
+    function openTask(id) {
+      selectedTask = current.tasks.find(t => t.id === Number(id));
+      if (!selectedTask) return;
+      $('editTitle').value = selectedTask.title;
+      $('editDue').value = selectedTask.due_at || '';
+      $('evidence').textContent = selectedTask.evidence || '模型没有提供原文依据';
+      $('taskSource').textContent = `来自「${selectedTask.group_name}」 · 当前状态：${selectedTask.status}`;
+      $('taskDialog').showModal();
+    }
+    async function saveTask(status) {
+      if (!selectedTask) return;
+      try {
+        await post(`/api/tasks/${selectedTask.id}`, {title:$('editTitle').value.trim(), due_at:$('editDue').value.trim(), status});
+        $('taskDialog').close(); toast('待办已更新'); await refresh();
+      } catch (err) { toast(err.message); }
+    }
+    function checkReminders() {
+      for (const t of current.tasks) {
+        if (t.status !== '进行中' || !t.due_at || seenDue.has(t.id)) continue;
+        const at = new Date(t.due_at.replace(' ', 'T'));
+        if (!Number.isNaN(at.getTime()) && at <= new Date()) {
+          seenDue.add(t.id);
+          if ('Notification' in window && Notification.permission === 'granted') new Notification('待办到期', {body:t.title});
+          else toast(`待办到期：${t.title}`);
+        }
+      }
+    }
+    $('groupSearch').addEventListener('input', renderGroups);
+    $('groups').addEventListener('change', async e => {
+      if (!e.target.dataset.group) return;
+      try { await post(`/api/groups/${encodeURIComponent(e.target.dataset.group)}`, {enabled:e.target.checked}); await refresh(); }
+      catch (err) { toast(err.message); await refresh(); }
+    });
+    $('tabs').addEventListener('click', e => { if (e.target.dataset.tab) { tab=e.target.dataset.tab; renderTasks(); } });
+    $('tasks').addEventListener('click', e => { const card=e.target.closest('[data-task]'); if (card) openTask(card.dataset.task); });
+    $('keyButton').onclick = () => $('keyDialog').showModal();
+    $('cancelKey').onclick = () => $('keyDialog').close();
+    $('saveKey').onclick = async () => { try { await post('/api/key', {key:$('apiKey').value}); $('apiKey').value=''; $('keyDialog').close(); toast('密钥已保存'); await refresh(); } catch(err) { toast(err.message); } };
+    $('saveNames').onclick = async () => { try { await post('/api/settings', {my_names:$('myNames').value}); toast('称呼已保存'); await refresh(); } catch(err) { toast(err.message); } };
+    $('startButton').onclick = async () => { try { await post('/api/monitor/start'); toast('监听已启动'); await refresh(); } catch(err) { toast(err.message); } };
+    $('stopButton').onclick = async () => { await post('/api/monitor/stop'); await refresh(); };
+    $('notifyButton').onclick = async () => { if (!('Notification' in window)) return toast('当前浏览器不支持系统提醒'); const p=await Notification.requestPermission(); toast(p==='granted'?'浏览器提醒已开启':'可在浏览器设置中开启提醒'); };
+    $('closeTask').onclick = () => $('taskDialog').close();
+    $('saveTask').onclick = () => saveTask('进行中');
+    $('completeTask').onclick = () => saveTask('已完成');
+    $('ignoreTask').onclick = () => saveTask('忽略');
+    refresh(); setInterval(refresh, 4000);
+  </script>
+</body>
+</html>

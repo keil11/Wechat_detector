@@ -1,0 +1,6 @@
+cryptography>=41
+colorama>=0.4
+pywin32>=305
+requests>=2.31
+zstandard>=0.19
+Flask>=3.0

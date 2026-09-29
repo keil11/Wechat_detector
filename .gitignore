@@ -1,0 +1,29 @@
+# Local chat content, tasks, and runtime state
+/data/
+/tasks.sqlite3
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*keys.json
+*watermark.json
+
+# Python generated files and environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Logs, temporary output, and editor metadata
+*.log
+wechatauto_logs/
+.idea/
+.vscode/
+Thumbs.db
